@@ -34,7 +34,7 @@ namespace EventHub.Auto.Doc
             foreach (var subscription in config.Subscriptions)
             {
                 var ehClient = new EventHubManagementClient(tokenCredentials);
-                ehClient.SubscriptionId = AzureSubscriptionId;
+                ehClient.SubscriptionId = subscription.SubscriptionId;
                 var resources = ehClient.Namespaces.ListBySubscription();
                 foreach(var resource in resources){
                     EhConnectionInfo conn = GetConnectionInfo(ehClient,resource);
@@ -89,6 +89,7 @@ namespace EventHub.Auto.Doc
                 storageContainerName);
 
             // Registers the Event Processor Host and starts receiving messages
+            
             eventProcessorHost.RegisterEventProcessorAsync<SimpleEventProcessor>().Wait();
 
             Task.Delay(5000).Wait();
@@ -109,13 +110,13 @@ namespace EventHub.Auto.Doc
             result.ConnectionString = Keys.PrimaryConnectionString;
             result.Key = Keys.PrimaryKey;
             var eventHubs = ehClient.EventHubs.ListAll(resourceGroup,ehNamespace);
-            foreach(var eventHub in eventHubs)
+            Parallel.ForEach(eventHubs, ev => 
             {
-                var param = new ConsumerGroupCreateOrUpdateParameters(eventHub.Location);
+                var param = new ConsumerGroupCreateOrUpdateParameters(ev.Location);
                 param.Name = ConsumerGroupName;
-                ehClient.ConsumerGroups.CreateOrUpdate(resourceGroup,ehNamespace,eventHub.Name,ConsumerGroupName,param);
-                result.EventHubs.Add(eventHub.Name);
-            }
+                ehClient.ConsumerGroups.CreateOrUpdate(resourceGroup,ehNamespace,ev.Name,ConsumerGroupName,param);
+                result.EventHubs.Add(ev.Name);
+            });
             return result;
             
         }
@@ -163,6 +164,7 @@ namespace EventHub.Auto.Doc
                             continue;
                         Console.WriteLine($"Key: {key.Key} | Value: {key.Value}");
                     }
+
                     //Console.WriteLine($"Message received.  Partition: '{context.PartitionId}', Data: '{data}'");
                 }
 
