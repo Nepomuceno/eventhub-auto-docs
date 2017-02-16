@@ -8,7 +8,7 @@
     "Microsoft.Azure.Management.Resources" : "3.4.0-preview",
     "Microsoft.IdentityModel.Clients.ActiveDirectory" : "3.13.8",
     "Microsoft.Azure.Management.EventHub": "0.0.1-preview",
-    "Microsoft.Azure.EventHubs.Processor" : "0.0.4-preview"
+    "Microsoft.Azure.EventHubs.Processor" : "1.0.0"
   },
   "frameworks": {
     "netcoreapp1.1": {

@@ -42,16 +42,16 @@ namespace EventHub.Auto.Doc
                 }
                 foreach(var ehNamespace in AllEventHubs.Values)
                 {
-                    foreach(var eh in ehNamespace.EventHubs)
+                    Parallel.ForEach(ehNamespace.EventHubs, eh => 
                     {
                         var nsName = ehNamespace.Namespace.Substring(0,Math.Min(ehNamespace.Namespace.Length,29));
-                        var ehName = eh.Substring(0,Math.Min(eh.Length,29));
+                        var ehName = eh.Key.Substring(0,Math.Min(eh.Key.Length,29));
                         var containerName = $"doc-{nsName}-{eh}";
                         CloudBlobClient blobClient = storageAccountClient.CreateCloudBlobClient();
                         CloudBlobContainer container = blobClient.GetContainerReference(containerName);
                         container.CreateIfNotExistsAsync().Wait();
-                        ConsumeData(eh,ehNamespace.ConnectionString,connectionString,containerName);
-                    }
+                        ConsumeData(eh,ehNamespace.ConnectionString,connectionString,containerName, $"{ehNamespace.Namespace}-{eh}");
+                    });
                 }
             }
             Console.WriteLine("End App!");
@@ -74,24 +74,26 @@ namespace EventHub.Auto.Doc
         }
 
         public static void ConsumeData(
-        string ehEntityPath, 
+        EventHub eh, 
         string ehConnectionString, 
         string storageConnectionString,
-        string storageContainerName)
+        string storageContainerName, string ehNamespace)
         {
             Console.WriteLine("Registering EventProcessor...");
 
             var eventProcessorHost = new EventProcessorHost(
-                ehEntityPath,
+                eh.Name,
                 ConsumerGroupName,
                 ehConnectionString,
                 storageConnectionString,
                 storageContainerName);
 
             // Registers the Event Processor Host and starts receiving messages
-            
-            eventProcessorHost.RegisterEventProcessorAsync<SimpleEventProcessor>().Wait();
-
+            eventProcessorHost
+            .RegisterEventProcessorFactoryAsync
+            (new EventDocProcessorFactory(ehNamespace))
+            .Wait();
+            Console.WriteLine("Starting Reading Messages");
             Task.Delay(5000).Wait();
 
             // Disposes of the Event Processor Host
@@ -114,8 +116,25 @@ namespace EventHub.Auto.Doc
             {
                 var param = new ConsumerGroupCreateOrUpdateParameters(ev.Location);
                 param.Name = ConsumerGroupName;
-                ehClient.ConsumerGroups.CreateOrUpdate(resourceGroup,ehNamespace,ev.Name,ConsumerGroupName,param);
-                result.EventHubs.Add(ev.Name);
+                try
+                {
+                    ehClient.ConsumerGroups.CreateOrUpdate(resourceGroup,ehNamespace,ev.Name,ConsumerGroupName,param);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error connecting to {ev.Name} Message: {ex.Message}");
+                }
+                var eventHub = new EventHub(){
+                    Name = ev.Name
+                };
+                result.EventHubs.AddOrUpdate(ev.Name,eventHub,(key,old) => {
+                    if(old != null)
+                    {
+                        old.Name = eventHub.Name;
+                        return old;
+                    }
+                    return eventHub;
+                });
             });
             return result;
             
@@ -132,18 +151,31 @@ namespace EventHub.Auto.Doc
             }
             return result.Result.AccessToken;
         }
+        public class EventDocProcessorFactory : IEventProcessorFactory
+        {
+            private readonly string _ehName;
+            public EventDocProcessorFactory(string ehName) {
+                _ehName = ehName;
+            }
+            public IEventProcessor CreateEventProcessor(PartitionContext context)
+            {
+                return new SimpleEventProcessor(_ehName);
+            }
+        }
 
         public class SimpleEventProcessor : IEventProcessor
         {
+            private string _ehName;
+            public SimpleEventProcessor(string ehName) {
+                _ehName = ehName;
+            }
             public Task CloseAsync(PartitionContext context, CloseReason reason)
             {
-                Console.WriteLine($"Processor Shutting Down. Partition '{context.PartitionId}', Reason: '{reason}'.");
                 return Task.FromResult<object>(null);
             }
 
             public Task OpenAsync(PartitionContext context)
             {
-                Console.WriteLine($"SimpleEventProcessor initialized.  Partition: '{context.PartitionId}'");
                 return Task.FromResult<object>(null);
             }
 
@@ -155,6 +187,7 @@ namespace EventHub.Auto.Doc
 
             public async Task ProcessEventsAsync(PartitionContext context, IEnumerable<EventData> messages)
             {
+                dynamic result;
                 foreach (var eventData in messages)
                 {
                     var data = Encoding.UTF8.GetString(eventData.Body.Array, eventData.Body.Offset, eventData.Body.Count);
@@ -162,12 +195,22 @@ namespace EventHub.Auto.Doc
                     {
                         if(key.Key.StartsWith("x-opt-"))
                             continue;
-                        Console.WriteLine($"Key: {key.Key} | Value: {key.Value}");
+                        if(key.Key.Equals("type",StringComparison.OrdinalIgnoreCase))
+                        {
+                            result.Type = 
+                        }
                     }
-
-                    //Console.WriteLine($"Message received.  Partition: '{context.PartitionId}', Data: '{data}'");
+                    try {
+                        var model = JsonConvert.DeserializeObject<dynamic>(data);
+                        Console.WriteLine($"[EventProperties]:");
+                        foreach(var key in model)
+                        {
+                            Console.WriteLine(key.Name);
+                        }
+                    } catch {
+                        Console.WriteLine($"not a valid json: {data}");
+                    }
                 }
-
                 await context.CheckpointAsync();
             }
         }
